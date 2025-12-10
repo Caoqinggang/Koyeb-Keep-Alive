@@ -1,83 +1,91 @@
-name: Koyeb Keep Alive & Notify
+name: Koyeb Keep Alive Fixed
 
 on:
   schedule:
-    # 计划任务：每 10 天运行一次 (UTC时间 0点)
     - cron: '0 0 */10 * *'
-  # 允许手动触发
   workflow_dispatch:
 
 jobs:
   keep-alive:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Koyeb CLI
-        run: |
-          # 安装 Koyeb 官方命令行工具
-          curl -s https://get.koyeb.com | bash
-          echo "$HOME/.koyeb/bin" >> $GITHUB_PATH
-
-      - name: Process Accounts and Notify
+      - name: Run Keep Alive & Notify
         shell: bash
         env:
           TOKENS_LIST: ${{ secrets.KOYEB_TOKENS }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
-          # 检查 Telegram 配置是否完整
+          # --------------------------
+          # 1. 安装 Koyeb CLI
+          # --------------------------
+          echo "正在安装 Koyeb CLI..."
+          curl -s https://get.koyeb.com | bash
+          
+          # 定义绝对路径，防止 127 错误
+          KOYEB_BIN="$HOME/.koyeb/bin/koyeb"
+          
+          # 检查是否安装成功
+          if [ ! -f "$KOYEB_BIN" ]; then
+            echo "❌ 错误: 找不到 Koyeb CLI 文件，安装可能失败。"
+            exit 1
+          fi
+          
+          echo "✅ CLI 安装成功，路径: $KOYEB_BIN"
+
+          # --------------------------
+          # 2. 检查 Telegram 配置
+          # --------------------------
           TG_ENABLE="false"
           if [[ -n "$TG_BOT_TOKEN" && -n "$TG_CHAT_ID" ]]; then
             TG_ENABLE="true"
+            echo "✅ Telegram 通知已启用"
           else
-            echo "⚠️ 未检测到 Telegram 配置，将跳过发送消息。"
+            echo "⚠️ 未检测到 Telegram 配置，跳过发送消息"
           fi
 
-          # 按行读取 Token 列表
+          # --------------------------
+          # 3. 循环处理账号
+          # --------------------------
           echo "$TOKENS_LIST" | while IFS= read -r token || [ -n "$token" ]; do
-            # 1. 过滤空行
+            # 过滤空行
             if [ -z "$token" ]; then continue; fi
             
-            # 2. 设置当前环境变量 (去除可能存在的空格)
+            # 设置当前 Token
             export KOYEB_TOKEN=$(echo "$token" | xargs)
             
             echo "----------------------------------------"
-            echo "正在尝试连接 Koyeb API..."
+            echo "正在连接 Koyeb API..."
 
-            # 3. 调用 API 获取组织信息 (JSON格式)
-            # 这一步既能保活，又能获取账号名字
-            OUTPUT=$(koyeb organizations list --output json 2>&1)
+            # 调用 API (使用绝对路径)
+            OUTPUT=$("$KOYEB_BIN" organizations list --output json 2>&1)
             EXIT_CODE=$?
 
-            # 4. 判断结果并构建消息
+            # 解析结果
             if [ $EXIT_CODE -eq 0 ]; then
-              # 成功：使用 jq 提取账号名 (取第一个组织的名称)
-              # 如果名字提取失败，默认显示 "Unknown"
-              ACCOUNT_NAME=$(echo "$OUTPUT" | jq -r '.[0].name // "Unknown Account"')
+              # 成功：提取账号名
+              ACCOUNT_NAME=$(echo "$OUTPUT" | jq -r '.[0].name // "Unknown"')
               STATUS="✅ 保活成功"
               DETAILS="账号: $ACCOUNT_NAME"
-              echo "成功: 检测到账号 [$ACCOUNT_NAME]"
+              echo "Success: [$ACCOUNT_NAME] 状态已刷新"
             else
               # 失败
               STATUS="❌ 保活失败"
-              DETAILS="原因: Token 无效或网络错误"
-              echo "失败: 无法连接 API"
+              DETAILS="原因: Token 无效或网络错误 (Exit Code: $EXIT_CODE)"
+              echo "Error Output: $OUTPUT"
             fi
 
-            # 5. 发送 Telegram 通知
+            # 发送 Telegram 通知
             if [ "$TG_ENABLE" == "true" ]; then
-              # 获取当前时间
               DATE=$(date "+%Y-%m-%d %H:%M:%S")
-              
-              # 构建消息文本 (URL编码处理换行)
+              # 简单的 URL 编码处理
               TEXT="$STATUS%0A$DETAILS%0A时间: $DATE"
               
-              # 发送请求
               curl -s -X POST "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
                 -d chat_id="$TG_CHAT_ID" \
-                -d text="$TEXT" \
-                > /dev/null
+                -d text="$TEXT" > /dev/null
             fi
-
-            # 6. 清理变量，准备下一次循环
+            
+            # 清理
             unset KOYEB_TOKEN
           done

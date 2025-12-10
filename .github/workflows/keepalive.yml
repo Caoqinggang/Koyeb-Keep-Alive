@@ -1,11 +1,10 @@
-name: Koyeb Multi-Account Keep Alive
+name: Koyeb Keep Alive & Notify
 
 on:
-  # 计划任务：每 10 天运行一次 (UTC时间 0点)
   schedule:
+    # 计划任务：每 10 天运行一次 (UTC时间 0点)
     - cron: '0 0 */10 * *'
-  
-  # 允许你在 GitHub Actions 页面手动点击按钮触发（方便测试）
+  # 允许手动触发
   workflow_dispatch:
 
 jobs:
@@ -14,39 +13,71 @@ jobs:
     steps:
       - name: Install Koyeb CLI
         run: |
-          # 下载并安装官方命令行工具
+          # 安装 Koyeb 官方命令行工具
           curl -s https://get.koyeb.com | bash
-          # 将其添加到系统路径
           echo "$HOME/.koyeb/bin" >> $GITHUB_PATH
 
-      - name: Loop Login for All Accounts
+      - name: Process Accounts and Notify
         shell: bash
         env:
-          # 读取你在 Secrets 里填写的 Token 列表
           TOKENS_LIST: ${{ secrets.KOYEB_TOKENS }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
-          # 将 Token 列表按行分割，循环处理
+          # 检查 Telegram 配置是否完整
+          TG_ENABLE="false"
+          if [[ -n "$TG_BOT_TOKEN" && -n "$TG_CHAT_ID" ]]; then
+            TG_ENABLE="true"
+          else
+            echo "⚠️ 未检测到 Telegram 配置，将跳过发送消息。"
+          fi
+
+          # 按行读取 Token 列表
           echo "$TOKENS_LIST" | while IFS= read -r token || [ -n "$token" ]; do
-            # 跳过空行
-            if [ -z "$token" ]; then
-              continue
-            fi
+            # 1. 过滤空行
+            if [ -z "$token" ]; then continue; fi
             
-            # 这里的逻辑是：临时将当前循环的 token 设为环境变量
-            # Koyeb CLI 会自动读取 KOYEB_TOKEN 这个变量
-            export KOYEB_TOKEN=$(echo "$token" | xargs) # xargs 去除可能存在的首尾空格
+            # 2. 设置当前环境变量 (去除可能存在的空格)
+            export KOYEB_TOKEN=$(echo "$token" | xargs)
             
             echo "----------------------------------------"
-            echo "正在尝试激活账号..."
-            
-            # 执行一个轻量级的查询命令，这等同于一次有效登录
-            # 'koyeb organization get' 会返回当前账户的组织信息
-            if koyeb organization get > /dev/null 2>&1; then
-              echo "✅ 成功: 账号活跃状态已刷新 (API调用成功)"
+            echo "正在尝试连接 Koyeb API..."
+
+            # 3. 调用 API 获取组织信息 (JSON格式)
+            # 这一步既能保活，又能获取账号名字
+            OUTPUT=$(koyeb organizations list --output json 2>&1)
+            EXIT_CODE=$?
+
+            # 4. 判断结果并构建消息
+            if [ $EXIT_CODE -eq 0 ]; then
+              # 成功：使用 jq 提取账号名 (取第一个组织的名称)
+              # 如果名字提取失败，默认显示 "Unknown"
+              ACCOUNT_NAME=$(echo "$OUTPUT" | jq -r '.[0].name // "Unknown Account"')
+              STATUS="✅ 保活成功"
+              DETAILS="账号: $ACCOUNT_NAME"
+              echo "成功: 检测到账号 [$ACCOUNT_NAME]"
             else
-              echo "❌ 失败: Token 可能已过期或无效"
+              # 失败
+              STATUS="❌ 保活失败"
+              DETAILS="原因: Token 无效或网络错误"
+              echo "失败: 无法连接 API"
             fi
-            
-            # 清除环境变量，准备下一个
+
+            # 5. 发送 Telegram 通知
+            if [ "$TG_ENABLE" == "true" ]; then
+              # 获取当前时间
+              DATE=$(date "+%Y-%m-%d %H:%M:%S")
+              
+              # 构建消息文本 (URL编码处理换行)
+              TEXT="$STATUS%0A$DETAILS%0A时间: $DATE"
+              
+              # 发送请求
+              curl -s -X POST "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
+                -d chat_id="$TG_CHAT_ID" \
+                -d text="$TEXT" \
+                > /dev/null
+            fi
+
+            # 6. 清理变量，准备下一次循环
             unset KOYEB_TOKEN
           done

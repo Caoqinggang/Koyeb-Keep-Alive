@@ -1,4 +1,5 @@
-name: Koyeb Keep Alive
+name: Koyeb Keep Alive Ultimate Fix
+
 on:
   schedule:
     - cron: '0 0 */10 * *'
@@ -46,35 +47,32 @@ jobs:
           fi
 
           # --------------------------
-          # 3. 循环保活 (增加防崩溃保护)
+          # 3. 循环保活
           # --------------------------
           echo "$TOKENS_LIST" | while IFS= read -r token || [ -n "$token" ]; do
             if [ -z "$token" ]; then continue; fi
             
-            # 去除空格
             export KOYEB_TOKEN=$(echo "$token" | xargs)
             
             echo "----------------------------------------"
             echo "正在连接账号..."
 
-            # 【关键修复】
-            # 临时关闭 'set -e'，防止 Token 无效导致整个脚本立即崩溃
+            # 临时关闭错误中断，防止 API 报错导致脚本崩溃
             set +e
             OUTPUT=$("$KOYEB_BIN" organizations list --output json 2>&1)
             EXIT_CODE=$?
             set -e
-            # 【修复结束】
 
             if [ $EXIT_CODE -eq 0 ]; then
-              # 成功逻辑
-              ACCOUNT_NAME=$(echo "$OUTPUT" | jq -r '.[0].name // "Unknown"')
+              # 【关键修复】兼容多种 JSON 结构，并防止 jq 报错退出
+              # 尝试读取 .organizations[0].name，如果不存在则读取 .name，否则返回 Unknown
+              ACCOUNT_NAME=$(echo "$OUTPUT" | jq -r '.organizations[0].name // .name // .[0].name // "Unknown"' 2>/dev/null || echo "Unknown")
+              
               STATUS="✅ 保活成功"
               DETAILS="账号: $ACCOUNT_NAME"
               echo "Success: $ACCOUNT_NAME"
             else
-              # 失败逻辑 (脚本不会崩溃，会走到这里)
               STATUS="❌ 保活失败"
-              # 截取前100个字符的错误信息防止太长
               ERR_MSG=$(echo "$OUTPUT" | head -c 100)
               DETAILS="原因: Token 可能无效或已过期"
               echo "Error Code: $EXIT_CODE"
@@ -84,8 +82,7 @@ jobs:
             # 发送 Telegram 通知
             if [ "$TG_ENABLE" == "true" ]; then
               DATE=$(date "+%Y-%m-%d %H:%M:%S")
-              # URL编码处理 (简单替换空格和换行)
-              TEXT="$STATUS%0A$DETAILS%0A错误详情: $ERR_MSG%0A时间: $DATE"
+              TEXT="$STATUS%0A$DETAILS%0A错误详情(如有): $ERR_MSG%0A时间: $DATE"
               
               curl -s -X POST "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
                 -d chat_id="$TG_CHAT_ID" \

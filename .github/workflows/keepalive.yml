@@ -2,6 +2,7 @@ name: Koyeb Keep Alive
 
 on:
   schedule:
+    # 每 10 天运行一次
     - cron: '0 0 */10 * *'
   workflow_dispatch:
 
@@ -17,37 +18,45 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
           # --------------------------
-          # 1. 手动安装 Koyeb CLI (避开 get.koyeb.com 错误)
+          # 1. 智能安装 Koyeb CLI
           # --------------------------
-          echo "正在从 GitHub 下载 Koyeb CLI..."
+          echo "正在查询 Koyeb CLI 最新版本..."
           
-          # 创建存放目录
-          mkdir -p $HOME/.koyeb/bin
+          # 使用 GitHub API 获取最新发布的下载链接 (寻找包含 linux_amd64 和 tar.gz 的文件)
+          DOWNLOAD_URL=$(curl -s https://api.github.com/repos/koyeb/koyeb-cli/releases/latest | \
+            jq -r '.assets[] | select(.name | contains("linux_amd64")) | select(.name | contains("tar.gz")) | .browser_download_url' | head -n 1)
           
-          # 直接下载官方最新版二进制包 (Linux amd64)
-          wget -q -O koyeb.tar.gz https://github.com/koyeb/koyeb-cli/releases/latest/download/koyeb-cli_linux_amd64.tar.gz
-          
-          # 解压文件
-          tar -xzf koyeb.tar.gz
-          
-          # 将解压出来的 koyeb 二进制文件移动到指定目录
-          # 使用 find 命令确保无论解压出什么文件夹结构都能找到二进制文件
-          find . -type f -name "koyeb" -exec mv {} $HOME/.koyeb/bin/koyeb \;
-          
-          # 赋予执行权限
-          chmod +x $HOME/.koyeb/bin/koyeb
-          
-          # 定义绝对路径
-          KOYEB_BIN="$HOME/.koyeb/bin/koyeb"
-          
-          # 最终检查
-          if [ ! -f "$KOYEB_BIN" ]; then
-            echo "❌ 错误: 安装失败，未找到 koyeb 文件。"
+          if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" == "null" ]; then
+            echo "❌ 错误: 无法获取下载链接，可能是 GitHub API 限制或网络问题。"
             exit 1
           fi
           
-          echo "✅ CLI 安装成功，版本信息："
-          "$KOYEB_BIN" version
+          echo "最新版下载地址: $DOWNLOAD_URL"
+          
+          # 创建目录
+          mkdir -p $HOME/.koyeb/bin
+          
+          # 下载
+          echo "正在下载..."
+          wget -q -O koyeb.tar.gz "$DOWNLOAD_URL"
+          
+          # 解压
+          tar -xzf koyeb.tar.gz
+          
+          # 查找并移动二进制文件 (因为解压后的文件夹名通常带有版本号，使用 find 自动定位)
+          find . -type f -name "koyeb" -exec mv {} $HOME/.koyeb/bin/koyeb \;
+          
+          # 赋予权限
+          chmod +x $HOME/.koyeb/bin/koyeb
+          KOYEB_BIN="$HOME/.koyeb/bin/koyeb"
+          
+          # 验证安装
+          if [ ! -f "$KOYEB_BIN" ]; then
+            echo "❌ 错误: 安装失败，未找到二进制文件。"
+            exit 1
+          fi
+          
+          echo "✅ 安装成功，版本: $("$KOYEB_BIN" version)"
 
           # --------------------------
           # 2. 检查 Telegram 配置
@@ -55,13 +64,12 @@ jobs:
           TG_ENABLE="false"
           if [[ -n "$TG_BOT_TOKEN" && -n "$TG_CHAT_ID" ]]; then
             TG_ENABLE="true"
-            echo "✅ Telegram 通知已启用"
           else
-            echo "⚠️ 未检测到 Telegram 配置，跳过发送消息"
+            echo "⚠️ 未检测到 Telegram 配置，跳过通知。"
           fi
 
           # --------------------------
-          # 3. 循环处理账号
+          # 3. 循环保活
           # --------------------------
           echo "$TOKENS_LIST" | while IFS= read -r token || [ -n "$token" ]; do
             if [ -z "$token" ]; then continue; fi
@@ -69,26 +77,24 @@ jobs:
             export KOYEB_TOKEN=$(echo "$token" | xargs)
             
             echo "----------------------------------------"
-            echo "正在连接 Koyeb API..."
+            echo "正在连接账号..."
 
-            # 调用 API
+            # API 调用
             OUTPUT=$("$KOYEB_BIN" organizations list --output json 2>&1)
             EXIT_CODE=$?
 
             if [ $EXIT_CODE -eq 0 ]; then
-              # 成功：提取账号名
               ACCOUNT_NAME=$(echo "$OUTPUT" | jq -r '.[0].name // "Unknown"')
               STATUS="✅ 保活成功"
               DETAILS="账号: $ACCOUNT_NAME"
-              echo "Success: [$ACCOUNT_NAME] 状态已刷新"
+              echo "Success: $ACCOUNT_NAME"
             else
-              # 失败
               STATUS="❌ 保活失败"
               DETAILS="原因: Token 无效或网络错误 (Code: $EXIT_CODE)"
-              echo "Error Output: $OUTPUT"
+              echo "Error: $OUTPUT"
             fi
 
-            # 发送 Telegram 通知
+            # 发送通知
             if [ "$TG_ENABLE" == "true" ]; then
               DATE=$(date "+%Y-%m-%d %H:%M:%S")
               TEXT="$STATUS%0A$DETAILS%0A时间: $DATE"

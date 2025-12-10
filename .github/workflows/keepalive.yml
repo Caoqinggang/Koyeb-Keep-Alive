@@ -1,8 +1,10 @@
-name: Koyeb Keep Alive Ultimate Fix
+name: Koyeb Keep Alive Final
 
 on:
   schedule:
+    # 计划任务：每 10 天运行一次 (UTC时间 0点)
     - cron: '0 0 */10 * *'
+  # 允许手动触发
   workflow_dispatch:
 
 jobs:
@@ -16,72 +18,90 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
-          # --------------------------
-          # 1. 智能安装 Koyeb CLI
-          # --------------------------
+          # ==========================================
+          # 1. 智能安装 Koyeb CLI (自动适配最新版)
+          # ==========================================
           echo "正在查询 Koyeb CLI 最新版本..."
           
+          # 通过 GitHub API 获取真实的下载链接，防止 404
           DOWNLOAD_URL=$(curl -s https://api.github.com/repos/koyeb/koyeb-cli/releases/latest | \
             jq -r '.assets[] | select(.name | contains("linux_amd64")) | select(.name | contains("tar.gz")) | .browser_download_url' | head -n 1)
           
           if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" == "null" ]; then
-            echo "❌ 错误: 无法获取下载链接。"
+            echo "❌ 错误: 无法获取下载链接，请检查网络或 GitHub API。"
             exit 1
           fi
           
+          echo "下载地址: $DOWNLOAD_URL"
+          
+          # 创建目录并下载
           mkdir -p $HOME/.koyeb/bin
           wget -q -O koyeb.tar.gz "$DOWNLOAD_URL"
           tar -xzf koyeb.tar.gz
+          
+          # 自动寻找二进制文件并移动 (防止文件夹名称变动)
           find . -type f -name "koyeb" -exec mv {} $HOME/.koyeb/bin/koyeb \;
           chmod +x $HOME/.koyeb/bin/koyeb
           KOYEB_BIN="$HOME/.koyeb/bin/koyeb"
           
-          echo "✅ 安装成功，版本: $("$KOYEB_BIN" version)"
+          echo "✅ CLI 安装成功，版本: $("$KOYEB_BIN" version)"
 
-          # --------------------------
+          # ==========================================
           # 2. 检查 Telegram 配置
-          # --------------------------
+          # ==========================================
           TG_ENABLE="false"
           if [[ -n "$TG_BOT_TOKEN" && -n "$TG_CHAT_ID" ]]; then
             TG_ENABLE="true"
+          else
+            echo "⚠️ 未检测到 Telegram 配置，将只打印日志。"
           fi
 
-          # --------------------------
-          # 3. 循环保活
-          # --------------------------
+          # ==========================================
+          # 3. 循环保活 (核心逻辑)
+          # ==========================================
           echo "$TOKENS_LIST" | while IFS= read -r token || [ -n "$token" ]; do
+            # 跳过空行
             if [ -z "$token" ]; then continue; fi
             
+            # 设置当前 Token (去除首尾空格)
             export KOYEB_TOKEN=$(echo "$token" | xargs)
             
             echo "----------------------------------------"
             echo "正在连接账号..."
 
-            # 临时关闭错误中断，防止 API 报错导致脚本崩溃
+            # --- 关键：临时关闭错误中断，防止 Token 失效导致脚本崩溃 ---
             set +e
+            # 获取 JSON 输出，同时捕获标准错误
             OUTPUT=$("$KOYEB_BIN" organizations list --output json 2>&1)
             EXIT_CODE=$?
             set -e
 
+            # --- 结果处理 ---
             if [ $EXIT_CODE -eq 0 ]; then
-              # 【关键修复】兼容多种 JSON 结构，并防止 jq 报错退出
-              # 尝试读取 .organizations[0].name，如果不存在则读取 .name，否则返回 Unknown
-              ACCOUNT_NAME=$(echo "$OUTPUT" | jq -r '.organizations[0].name // .name // .[0].name // "Unknown"' 2>/dev/null || echo "Unknown")
+              # 【调试用】打印原始 JSON，如果名字还是 Unknown，请去 GitHub 日志查看这一行
+              echo "DEBUG Raw JSON: $OUTPUT"
+              
+              # 【增强版解析】递归查找任意层级下的 name 或 slug 字段
+              ACCOUNT_NAME=$(echo "$OUTPUT" | jq -r '
+                (.. | objects | select(has("name")) | .name) // 
+                (.. | objects | select(has("slug")) | .slug) // 
+                "Unknown Account"' | head -n 1)
               
               STATUS="✅ 保活成功"
               DETAILS="账号: $ACCOUNT_NAME"
               echo "Success: $ACCOUNT_NAME"
             else
               STATUS="❌ 保活失败"
+              # 截取前 100 个字符的错误信息
               ERR_MSG=$(echo "$OUTPUT" | head -c 100)
               DETAILS="原因: Token 可能无效或已过期"
-              echo "Error Code: $EXIT_CODE"
-              echo "Error Log: $ERR_MSG"
+              echo "Error: $OUTPUT"
             fi
 
-            # 发送 Telegram 通知
+            # --- 发送 Telegram 通知 ---
             if [ "$TG_ENABLE" == "true" ]; then
               DATE=$(date "+%Y-%m-%d %H:%M:%S")
+              # URL 编码处理
               TEXT="$STATUS%0A$DETAILS%0A错误详情(如有): $ERR_MSG%0A时间: $DATE"
               
               curl -s -X POST "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
@@ -89,6 +109,7 @@ jobs:
                 -d text="$TEXT" > /dev/null
             fi
             
+            # 清理变量
             unset KOYEB_TOKEN
             unset ERR_MSG
           done

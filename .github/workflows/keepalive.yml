@@ -1,4 +1,4 @@
-name: Koyeb Keep Alive Fixed
+name: Koyeb Keep Alive
 
 on:
   schedule:
@@ -17,21 +17,37 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
           # --------------------------
-          # 1. 安装 Koyeb CLI
+          # 1. 手动安装 Koyeb CLI (避开 get.koyeb.com 错误)
           # --------------------------
-          echo "正在安装 Koyeb CLI..."
-          curl -s https://get.koyeb.com | bash
+          echo "正在从 GitHub 下载 Koyeb CLI..."
           
-          # 定义绝对路径，防止 127 错误
+          # 创建存放目录
+          mkdir -p $HOME/.koyeb/bin
+          
+          # 直接下载官方最新版二进制包 (Linux amd64)
+          wget -q -O koyeb.tar.gz https://github.com/koyeb/koyeb-cli/releases/latest/download/koyeb-cli_linux_amd64.tar.gz
+          
+          # 解压文件
+          tar -xzf koyeb.tar.gz
+          
+          # 将解压出来的 koyeb 二进制文件移动到指定目录
+          # 使用 find 命令确保无论解压出什么文件夹结构都能找到二进制文件
+          find . -type f -name "koyeb" -exec mv {} $HOME/.koyeb/bin/koyeb \;
+          
+          # 赋予执行权限
+          chmod +x $HOME/.koyeb/bin/koyeb
+          
+          # 定义绝对路径
           KOYEB_BIN="$HOME/.koyeb/bin/koyeb"
           
-          # 检查是否安装成功
+          # 最终检查
           if [ ! -f "$KOYEB_BIN" ]; then
-            echo "❌ 错误: 找不到 Koyeb CLI 文件，安装可能失败。"
+            echo "❌ 错误: 安装失败，未找到 koyeb 文件。"
             exit 1
           fi
           
-          echo "✅ CLI 安装成功，路径: $KOYEB_BIN"
+          echo "✅ CLI 安装成功，版本信息："
+          "$KOYEB_BIN" version
 
           # --------------------------
           # 2. 检查 Telegram 配置
@@ -48,20 +64,17 @@ jobs:
           # 3. 循环处理账号
           # --------------------------
           echo "$TOKENS_LIST" | while IFS= read -r token || [ -n "$token" ]; do
-            # 过滤空行
             if [ -z "$token" ]; then continue; fi
             
-            # 设置当前 Token
             export KOYEB_TOKEN=$(echo "$token" | xargs)
             
             echo "----------------------------------------"
             echo "正在连接 Koyeb API..."
 
-            # 调用 API (使用绝对路径)
+            # 调用 API
             OUTPUT=$("$KOYEB_BIN" organizations list --output json 2>&1)
             EXIT_CODE=$?
 
-            # 解析结果
             if [ $EXIT_CODE -eq 0 ]; then
               # 成功：提取账号名
               ACCOUNT_NAME=$(echo "$OUTPUT" | jq -r '.[0].name // "Unknown"')
@@ -71,14 +84,13 @@ jobs:
             else
               # 失败
               STATUS="❌ 保活失败"
-              DETAILS="原因: Token 无效或网络错误 (Exit Code: $EXIT_CODE)"
+              DETAILS="原因: Token 无效或网络错误 (Code: $EXIT_CODE)"
               echo "Error Output: $OUTPUT"
             fi
 
             # 发送 Telegram 通知
             if [ "$TG_ENABLE" == "true" ]; then
               DATE=$(date "+%Y-%m-%d %H:%M:%S")
-              # 简单的 URL 编码处理
               TEXT="$STATUS%0A$DETAILS%0A时间: $DATE"
               
               curl -s -X POST "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
@@ -86,6 +98,5 @@ jobs:
                 -d text="$TEXT" > /dev/null
             fi
             
-            # 清理
             unset KOYEB_TOKEN
           done

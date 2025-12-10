@@ -1,8 +1,6 @@
 name: Koyeb Keep Alive
-
 on:
   schedule:
-    # 每 10 天运行一次
     - cron: '0 0 */10 * *'
   workflow_dispatch:
 
@@ -22,39 +20,20 @@ jobs:
           # --------------------------
           echo "正在查询 Koyeb CLI 最新版本..."
           
-          # 使用 GitHub API 获取最新发布的下载链接 (寻找包含 linux_amd64 和 tar.gz 的文件)
           DOWNLOAD_URL=$(curl -s https://api.github.com/repos/koyeb/koyeb-cli/releases/latest | \
             jq -r '.assets[] | select(.name | contains("linux_amd64")) | select(.name | contains("tar.gz")) | .browser_download_url' | head -n 1)
           
           if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" == "null" ]; then
-            echo "❌ 错误: 无法获取下载链接，可能是 GitHub API 限制或网络问题。"
+            echo "❌ 错误: 无法获取下载链接。"
             exit 1
           fi
           
-          echo "最新版下载地址: $DOWNLOAD_URL"
-          
-          # 创建目录
           mkdir -p $HOME/.koyeb/bin
-          
-          # 下载
-          echo "正在下载..."
           wget -q -O koyeb.tar.gz "$DOWNLOAD_URL"
-          
-          # 解压
           tar -xzf koyeb.tar.gz
-          
-          # 查找并移动二进制文件 (因为解压后的文件夹名通常带有版本号，使用 find 自动定位)
           find . -type f -name "koyeb" -exec mv {} $HOME/.koyeb/bin/koyeb \;
-          
-          # 赋予权限
           chmod +x $HOME/.koyeb/bin/koyeb
           KOYEB_BIN="$HOME/.koyeb/bin/koyeb"
-          
-          # 验证安装
-          if [ ! -f "$KOYEB_BIN" ]; then
-            echo "❌ 错误: 安装失败，未找到二进制文件。"
-            exit 1
-          fi
           
           echo "✅ 安装成功，版本: $("$KOYEB_BIN" version)"
 
@@ -64,40 +43,49 @@ jobs:
           TG_ENABLE="false"
           if [[ -n "$TG_BOT_TOKEN" && -n "$TG_CHAT_ID" ]]; then
             TG_ENABLE="true"
-          else
-            echo "⚠️ 未检测到 Telegram 配置，跳过通知。"
           fi
 
           # --------------------------
-          # 3. 循环保活
+          # 3. 循环保活 (增加防崩溃保护)
           # --------------------------
           echo "$TOKENS_LIST" | while IFS= read -r token || [ -n "$token" ]; do
             if [ -z "$token" ]; then continue; fi
             
+            # 去除空格
             export KOYEB_TOKEN=$(echo "$token" | xargs)
             
             echo "----------------------------------------"
             echo "正在连接账号..."
 
-            # API 调用
+            # 【关键修复】
+            # 临时关闭 'set -e'，防止 Token 无效导致整个脚本立即崩溃
+            set +e
             OUTPUT=$("$KOYEB_BIN" organizations list --output json 2>&1)
             EXIT_CODE=$?
+            set -e
+            # 【修复结束】
 
             if [ $EXIT_CODE -eq 0 ]; then
+              # 成功逻辑
               ACCOUNT_NAME=$(echo "$OUTPUT" | jq -r '.[0].name // "Unknown"')
               STATUS="✅ 保活成功"
               DETAILS="账号: $ACCOUNT_NAME"
               echo "Success: $ACCOUNT_NAME"
             else
+              # 失败逻辑 (脚本不会崩溃，会走到这里)
               STATUS="❌ 保活失败"
-              DETAILS="原因: Token 无效或网络错误 (Code: $EXIT_CODE)"
-              echo "Error: $OUTPUT"
+              # 截取前100个字符的错误信息防止太长
+              ERR_MSG=$(echo "$OUTPUT" | head -c 100)
+              DETAILS="原因: Token 可能无效或已过期"
+              echo "Error Code: $EXIT_CODE"
+              echo "Error Log: $ERR_MSG"
             fi
 
-            # 发送通知
+            # 发送 Telegram 通知
             if [ "$TG_ENABLE" == "true" ]; then
               DATE=$(date "+%Y-%m-%d %H:%M:%S")
-              TEXT="$STATUS%0A$DETAILS%0A时间: $DATE"
+              # URL编码处理 (简单替换空格和换行)
+              TEXT="$STATUS%0A$DETAILS%0A错误详情: $ERR_MSG%0A时间: $DATE"
               
               curl -s -X POST "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
                 -d chat_id="$TG_CHAT_ID" \
@@ -105,4 +93,5 @@ jobs:
             fi
             
             unset KOYEB_TOKEN
+            unset ERR_MSG
           done

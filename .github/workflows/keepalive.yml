@@ -1,0 +1,52 @@
+name: Koyeb Multi-Account Keep Alive
+
+on:
+  # 计划任务：每 10 天运行一次 (UTC时间 0点)
+  schedule:
+    - cron: '0 0 */10 * *'
+  
+  # 允许你在 GitHub Actions 页面手动点击按钮触发（方便测试）
+  workflow_dispatch:
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Koyeb CLI
+        run: |
+          # 下载并安装官方命令行工具
+          curl -s https://get.koyeb.com | bash
+          # 将其添加到系统路径
+          echo "$HOME/.koyeb/bin" >> $GITHUB_PATH
+
+      - name: Loop Login for All Accounts
+        shell: bash
+        env:
+          # 读取你在 Secrets 里填写的 Token 列表
+          TOKENS_LIST: ${{ secrets.KOYEB_TOKENS }}
+        run: |
+          # 将 Token 列表按行分割，循环处理
+          echo "$TOKENS_LIST" | while IFS= read -r token || [ -n "$token" ]; do
+            # 跳过空行
+            if [ -z "$token" ]; then
+              continue
+            fi
+            
+            # 这里的逻辑是：临时将当前循环的 token 设为环境变量
+            # Koyeb CLI 会自动读取 KOYEB_TOKEN 这个变量
+            export KOYEB_TOKEN=$(echo "$token" | xargs) # xargs 去除可能存在的首尾空格
+            
+            echo "----------------------------------------"
+            echo "正在尝试激活账号..."
+            
+            # 执行一个轻量级的查询命令，这等同于一次有效登录
+            # 'koyeb organization get' 会返回当前账户的组织信息
+            if koyeb organization get > /dev/null 2>&1; then
+              echo "✅ 成功: 账号活跃状态已刷新 (API调用成功)"
+            else
+              echo "❌ 失败: Token 可能已过期或无效"
+            fi
+            
+            # 清除环境变量，准备下一个
+            unset KOYEB_TOKEN
+          done

@@ -44,7 +44,7 @@ jobs:
           chmod +x $HOME/.koyeb/bin/koyeb
           KOYEB_BIN="$HOME/.koyeb/bin/koyeb"
           
-          echo "✅ CLI 安装成功，版本: $("$KOYEB_BIN" version)"
+          echo "✅ Koyeb CLI 安装成功，版本: $("$KOYEB_BIN" version)"
 
           # ==========================================
           # 2. 检查 Telegram 配置
@@ -87,11 +87,11 @@ jobs:
                 (.. | objects | select(has("slug")) | .slug) // 
                 "Unknown Account"' | head -n 1)
               
-              STATUS="✅ 保活成功"
+              STATUS="✅ Koyeb账号保活成功"
               DETAILS="账号: $ACCOUNT_NAME"
               echo "Success: $ACCOUNT_NAME"
             else
-              STATUS="❌ 保活失败"
+              STATUS="❌ Koyeb账号保活失败"
               # 截取前 100 个字符的错误信息
               ERR_MSG=$(echo "$OUTPUT" | head -c 100)
               DETAILS="原因: Token 可能无效或已过期"

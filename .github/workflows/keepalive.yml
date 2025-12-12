@@ -3,7 +3,7 @@ name: Koyeb Keep Alive
 on:
   schedule:
     # 计划任务：每 10 天运行一次 (UTC时间 0点)
-    - cron: '30 0 */14 * *'
+    - cron: '30 0 */6 * *'
   # 允许手动触发
   workflow_dispatch:
 

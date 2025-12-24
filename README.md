@@ -39,7 +39,9 @@ token_for_account_1
 token_for_account_2
 token_for_account_3
 
-🕒 运行机制
+---
+
+## 🕒 运行机制
 定时触发: 默认为 UTC 时间每隔 6 天的 00:30 (北京时间 08:30) 运行一次。
 Cron 表达式: 30 0 */6 * *
 手动触发: 您可以在 GitHub 仓库的 Actions 页面，选择 "Koyeb Keep Alive" -> Run workflow 手动触发测试。

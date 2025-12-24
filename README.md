@@ -33,18 +33,11 @@
 | `TG_BOT_TOKEN` | ❌ | Telegram 机器人的 Token (如果不填则不发送通知)。 |
 | `TG_CHAT_ID` | ❌ | 接收通知的 Telegram 用户 ID (如果不填则不发送通知)。 |
 
-**`KOYEB_TOKENS` 填写示例：**
-```text
-token_for_account_1
-token_for_account_2
-token_for_account_3
-
----
-
 ## 🕒 运行机制
 定时触发: 默认为 UTC 时间每隔 6 天的 00:30 (北京时间 08:30) 运行一次。
 Cron 表达式: 30 0 */6 * *
 手动触发: 您可以在 GitHub 仓库的 Actions 页面，选择 "Koyeb Keep Alive" -> Run workflow 手动触发测试。
+
 📝 脚本逻辑说明
 环境准备: 自动下载最新版 Linux AMD64 架构的 Koyeb CLI 工具。
 读取配置: 逐行读取 KOYEB_TOKENS 中的 Token。
@@ -53,6 +46,7 @@ Cron 表达式: 30 0 */6 * *
 脚本包含错误捕获机制，单个 Token 失效不会中断整个流程。
 结果解析: 解析 JSON 返回值，提取账号名称。
 发送通知: 将运行状态推送到 Telegram。
+
 ⚠️ 免责声明
 本脚本仅用于辅助保持账号活跃，不保证 100% 防止账号被封禁。
 请勿滥用 GitHub Actions 资源。
@@ -60,5 +54,6 @@ Koyeb 的服务条款可能会随时更新，请自行关注官方政策。
 License: MIT
 code
 Code
+
 ### 💡 小提示
 如果是你自己使用，记得将文档开头的 `你的用户名/你的仓库名` 替换成你真实的 GitHub 路径，这样徽章（Badge）才能正常显示构建状态。
